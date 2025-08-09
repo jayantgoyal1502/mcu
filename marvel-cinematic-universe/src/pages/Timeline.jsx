@@ -3,8 +3,7 @@ import mcuData from "../mcuData";
 import TimelineCard from "../components/TimelineCard";
 
 const Timeline = () => {
-    // ...existing code...
-    // Favorites state (localStorage)
+    // Favorites
     const [favorites, setFavorites] = React.useState(() => {
         const saved = localStorage.getItem('mcuFavorites');
         return saved ? JSON.parse(saved) : {};
@@ -12,112 +11,110 @@ const Timeline = () => {
     React.useEffect(() => {
         localStorage.setItem('mcuFavorites', JSON.stringify(favorites));
     }, [favorites]);
-    // OMDb API key
-    const OMDB_API_KEY = "4c6ecf49";
 
-    // Fetched details cache
+    const TMDB_API_KEY = "293efb0065d79b9e696fe8275049db26";
+    const TMDB_BASE_URL = "https://api.themoviedb.org/3";
+
+    // Movie details cache
     const [movieDetails, setMovieDetails] = React.useState({});
     const [loadingDetails, setLoadingDetails] = React.useState(false);
 
-    // Fetch details from OMDb when a card is clicked
-    const handleCardClick = async (movie) => {
-        setSelectedMovie(movie);
-        if (!movieDetails[movie.title]) {
-            setLoadingDetails(true);
-            try {
-                const res = await fetch(`https://www.omdbapi.com/?t=${encodeURIComponent(movie.title)}&apikey=${OMDB_API_KEY}`);
-                const data = await res.json();
-                setMovieDetails(prev => ({ ...prev, [movie.title]: data }));
-            } catch (err) {
-                setMovieDetails(prev => ({ ...prev, [movie.title]: { Error: "Failed to fetch details" } }));
-            }
-            setLoadingDetails(false);
-        }
-    };
-    // Watchlist state (localStorage)
+    // Watched state
     const [watched, setWatched] = React.useState(() => {
         const saved = localStorage.getItem('mcuWatched');
         return saved ? JSON.parse(saved) : {};
     });
-
-    // Save watched state to localStorage
     React.useEffect(() => {
         localStorage.setItem('mcuWatched', JSON.stringify(watched));
     }, [watched]);
 
-
-
-    // Mark all/reset
-    const markAllWatched = () => {
-        const all = {};
-        filteredData.forEach(m => { all[m.id] = true; });
-        setWatched(all);
-    };
-    const resetProgress = () => setWatched({});
+    // Sorting/filtering
     const [sortType, setSortType] = React.useState('chronological');
-    // Multi-select genres
     const genreList = ['Action','Adventure','Sci-Fi','Fantasy','Comedy','Drama','Thriller'];
-    const [genreFilter, setGenreFilter] = React.useState([]); // array of selected genres
+    const [genreFilter, setGenreFilter] = React.useState([]);
     const [phaseFilter, setPhaseFilter] = React.useState('all');
     const [search, setSearch] = React.useState('');
     const [selectedMovie, setSelectedMovie] = React.useState(null);
 
     // Sorting
     const sortedData = [...mcuData].sort((a, b) => {
-        if (sortType === 'release') {
-            return new Date(a.releaseDate) - new Date(b.releaseDate);
-        }
-        if (sortType === 'title') {
-            return a.title.localeCompare(b.title);
-        }
+        if (sortType === 'release') return new Date(a.releaseDate) - new Date(b.releaseDate);
+        if (sortType === 'title') return a.title.localeCompare(b.title);
         if (sortType === 'rating') {
-            // Use OMDb rating if available, fallback to local
-            const ar = a.rating || (a.omdb && a.omdb.imdbRating ? parseFloat(a.omdb.imdbRating) : 0);
-            const br = b.rating || (b.omdb && b.omdb.imdbRating ? parseFloat(b.omdb.imdbRating) : 0);
+            const ar = movieDetails[a.title]?.vote_average || 0;
+            const br = movieDetails[b.title]?.vote_average || 0;
             return br - ar;
         }
         return a.chronologicalOrder - b.chronologicalOrder;
     });
 
-    // Filtering (multi-genre)
+    // Filtering
     const filteredData = sortedData.filter(movie => {
         const phaseMatch = phaseFilter === 'all' || movie.phase === Number(phaseFilter);
         const searchMatch = movie.title.toLowerCase().includes(search.toLowerCase());
-        // Multi-genre match
         let genreMatch = true;
         if (genreFilter.length > 0) {
-            const genres = movieDetails[movie.title]?.Genre?.split(',').map(g => g.trim()) || [];
+            const genres = movieDetails[movie.title]?.genres?.map(g => g.name) || [];
             genreMatch = genreFilter.some(gf => genres.includes(gf));
         }
         return phaseMatch && searchMatch && genreMatch;
     });
 
-    // Fetch OMDb details for all visible movies (filteredData) on mount or when filteredData changes
+    // Fetch TMDB details helper
+    const fetchTMDBDetails = async (title) => {
+        try {
+            const searchRes = await fetch(`${TMDB_BASE_URL}/search/movie?api_key=${TMDB_API_KEY}&query=${encodeURIComponent(title)}`);
+            const searchData = await searchRes.json();
+            if (!searchData.results || searchData.results.length === 0) return { error: "Movie not found" };
+
+            const movieId = searchData.results[0].id;
+            const detailsRes = await fetch(`${TMDB_BASE_URL}/movie/${movieId}?api_key=${TMDB_API_KEY}&append_to_response=credits,external_ids`);
+            const detailsData = await detailsRes.json();
+
+            return {
+                title: detailsData.title,
+                overview: detailsData.overview,
+                genres: detailsData.genres,
+                vote_average: detailsData.vote_average,
+                director: detailsData.credits?.crew?.find(c => c.job === "Director")?.name || "N/A",
+                actors: detailsData.credits?.cast?.slice(0, 5).map(c => c.name).join(", ") || "N/A",
+                imdb_id: detailsData.external_ids?.imdb_id || null
+            };
+        } catch {
+            return { error: "Failed to fetch details" };
+        }
+    };
+
+    // On card click
+    const handleCardClick = async (movie) => {
+        setSelectedMovie(movie);
+        if (!movieDetails[movie.title]) {
+            setLoadingDetails(true);
+            const data = await fetchTMDBDetails(movie.title);
+            setMovieDetails(prev => ({ ...prev, [movie.title]: data }));
+            setLoadingDetails(false);
+        }
+    };
+
+    // Prefetch visible movie details
     React.useEffect(() => {
-        const OMDB_API_KEY = "4c6ecf49";
-        filteredData.forEach(movie => {
+        filteredData.forEach(async (movie) => {
             if (!movieDetails[movie.title]) {
-                fetch(`https://www.omdbapi.com/?t=${encodeURIComponent(movie.title)}&apikey=${OMDB_API_KEY}`)
-                    .then(res => res.json())
-                    .then(data => {
-                        setMovieDetails(prev => ({ ...prev, [movie.title]: data }));
-                    });
+                const data = await fetchTMDBDetails(movie.title);
+                setMovieDetails(prev => ({ ...prev, [movie.title]: data }));
             }
         });
     }, [filteredData]);
 
-    // Progress (must be after filteredData)
+    // Progress
     const totalMovies = filteredData.length;
     const watchedCount = filteredData.filter(m => watched[m.id]).length;
     const progressPercent = totalMovies ? Math.round((watchedCount / totalMovies) * 100) : 0;
 
-    // Responsive layout
     const isMobile = window.innerWidth < 768;
-
-    // Next movie recommendation
     const nextMovie = filteredData.find(m => !watched[m.id]);
 
-    // Related Marvel TV shows (static list for now)
+    // Related Marvel TV shows
     const marvelShows = [
         { title: "WandaVision", link: "https://www.disneyplus.com/series/wandavision/4Sr2yKSjJxE4" },
         { title: "Loki", link: "https://www.disneyplus.com/series/loki/6pARMvILBGzF" },
@@ -126,11 +123,20 @@ const Timeline = () => {
         { title: "Moon Knight", link: "https://www.disneyplus.com/series/moon-knight/4S3oOF1kn6Zy" },
     ];
 
+    // Mark all/reset
+    const markAllWatched = () => {
+        const all = {};
+        filteredData.forEach(m => { all[m.id] = true; });
+        setWatched(all);
+    };
+    const resetProgress = () => setWatched({});
+
     return (
         <div className="min-h-screen bg-black py-10">
             <h1 className="text-3xl font-bold text-center text-red-500 mb-8">
                 Marvel Cinematic Universe Timeline
             </h1>
+
             {/* Progress Bar */}
             <div className="flex flex-col md:flex-row items-center justify-center gap-4 mb-4">
                 <div className="w-full max-w-md">
@@ -142,7 +148,8 @@ const Timeline = () => {
                 <button onClick={markAllWatched} className="bg-green-600 text-white px-3 py-1 rounded hover:bg-green-700">Mark All as Watched</button>
                 <button onClick={resetProgress} className="bg-red-600 text-white px-3 py-1 rounded hover:bg-red-700">Reset Progress</button>
             </div>
-            {/* Favorites Section */}
+
+            {/* Favorites */}
             {Object.keys(favorites).length > 0 && (
                 <div className="w-full max-w-2xl mx-auto mb-8 bg-yellow-100 rounded-lg p-4 text-black shadow">
                     <h2 className="text-xl font-bold mb-2">Your Favorites</h2>
@@ -153,14 +160,15 @@ const Timeline = () => {
                                 <div key={favMovie.id} className="flex items-center gap-2 bg-white rounded shadow px-2 py-1">
                                     <img src={favMovie.poster} alt={favMovie.title} className="w-10 h-14 object-cover rounded" />
                                     <span className="font-semibold">{favMovie.title}</span>
-                                    <button onClick={() => setFavorites(f => { const copy = { ...f }; delete copy[favMovie.id]; return copy; })} className="text-red-500 hover:text-red-700 text-lg" title="Remove from favorites">&#10084;</button>
+                                    <button onClick={() => setFavorites(f => { const copy = { ...f }; delete copy[favMovie.id]; return copy; })} className="text-red-500 hover:text-red-700 text-lg">&#10084;</button>
                                 </div>
                             ) : null;
                         })}
                     </div>
                 </div>
             )}
-            {/* Personalized Recommendations */}
+
+            {/* Recommendations */}
             <div className="w-full max-w-2xl mx-auto mb-8 bg-gray-900 rounded-lg p-4 text-white shadow">
                 <h2 className="text-xl font-bold mb-2">Personalized Recommendations</h2>
                 <div className="mb-2">
@@ -182,6 +190,8 @@ const Timeline = () => {
                     </ul>
                 </div>
             </div>
+
+            {/* Filters */}
             <div className="flex flex-col md:flex-row items-center justify-center gap-4 mb-6">
                 <select value={sortType} onChange={e => setSortType(e.target.value)} className="px-2 py-1 rounded">
                     <option value="chronological">Sort by MCU Timeline</option>
@@ -198,61 +208,39 @@ const Timeline = () => {
                     <option value="5">Phase 5</option>
                     <option value="6">Phase 6</option>
                 </select>
-                <input
-                    type="text"
-                    placeholder="Search movies..."
-                    value={search}
-                    onChange={e => setSearch(e.target.value)}
-                    className="px-2 py-1 rounded"
-                />
-                {/* Multi-select Genre tag chips */}
+                <input type="text" placeholder="Search movies..." value={search} onChange={e => setSearch(e.target.value)} className="px-2 py-1 rounded" />
                 <div className="flex flex-wrap gap-2">
-                    <button
-                        onClick={() => setGenreFilter([])}
-                        className={`px-2 py-1 rounded ${genreFilter.length===0?'bg-blue-600 text-white':'bg-gray-200 text-black'}`}
-                    >All Genres</button>
+                    <button onClick={() => setGenreFilter([])} className={`px-2 py-1 rounded ${genreFilter.length===0?'bg-blue-600 text-white':'bg-gray-200 text-black'}`}>All Genres</button>
                     {genreList.map(genre => (
-                        <button
-                            key={genre}
-                            onClick={() => {
-                                setGenreFilter(f => f.includes(genre) ? f.filter(g => g!==genre) : [...f, genre]);
-                            }}
-                            className={`px-2 py-1 rounded ${genreFilter.includes(genre)?'bg-blue-600 text-white':'bg-gray-200 text-black'}`}
-                        >{genre}</button>
+                        <button key={genre} onClick={() => {
+                            setGenreFilter(f => f.includes(genre) ? f.filter(g => g!==genre) : [...f, genre]);
+                        }} className={`px-2 py-1 rounded ${genreFilter.includes(genre)?'bg-blue-600 text-white':'bg-gray-200 text-black'}`}>
+                            {genre}
+                        </button>
                     ))}
                 </div>
             </div>
+
+            {/* Movie cards */}
             <div className={isMobile ? "flex flex-col items-center gap-6" : "flex flex-wrap justify-center gap-6"}>
-                <div
-                    className={isMobile ? "flex flex-row overflow-x-auto gap-6 pb-4" : "flex flex-wrap justify-center gap-6"}
-                    style={isMobile ? { WebkitOverflowScrolling: 'touch' } : {}}
-                >
+                <div className={isMobile ? "flex flex-row overflow-x-auto gap-6 pb-4" : "flex flex-wrap justify-center gap-6"} style={isMobile ? { WebkitOverflowScrolling: 'touch' } : {}}>
                     {filteredData.map(movie => (
                         <div key={movie.id} className="relative min-w-[270px]">
                             <div onClick={() => handleCardClick(movie)} className="cursor-pointer">
                                 <TimelineCard movie={movie} />
                             </div>
-                            <input
-                                type="checkbox"
-                                checked={!!watched[movie.id]}
-                                onChange={e => setWatched(w => ({ ...w, [movie.id]: e.target.checked }))}
-                                className="absolute top-2 left-2 w-5 h-5 accent-green-500"
-                                title="Mark as watched"
-                            />
-                            <button
-                                onClick={() => setFavorites(f => ({ ...f, [movie.id]: true }))}
-                                className={`absolute top-2 right-2 text-lg ${favorites[movie.id] ? 'text-red-500' : 'text-gray-400'} hover:text-red-600 transition-colors`}
-                                title={favorites[movie.id] ? 'Favorited' : 'Add to favorites'}
-                            >&#10084;</button>
+                            <input type="checkbox" checked={!!watched[movie.id]} onChange={e => setWatched(w => ({ ...w, [movie.id]: e.target.checked }))} className="absolute top-2 left-2 w-5 h-5 accent-green-500" />
+                            <button onClick={() => setFavorites(f => ({ ...f, [movie.id]: true }))} className={`absolute top-2 right-2 text-lg ${favorites[movie.id] ? 'text-red-500' : 'text-gray-400'} hover:text-red-600`}>&#10084;</button>
                         </div>
                     ))}
                 </div>
             </div>
-            {/* Modal for movie details */}
+
+            {/* Modal */}
             {selectedMovie && (
                 <div className="fixed inset-0 bg-black bg-opacity-70 flex items-center justify-center z-50 px-2">
                     <div className="bg-white text-black rounded-lg p-6 w-full max-w-md relative shadow-lg overflow-y-auto max-h-[90vh]">
-                        <button className="absolute top-2 right-2 text-xl text-gray-700 hover:text-red-500 transition-colors" onClick={() => setSelectedMovie(null)} aria-label="Close">&times;</button>
+                        <button className="absolute top-2 right-2 text-xl text-gray-700 hover:text-red-500" onClick={() => setSelectedMovie(null)}>&times;</button>
                         <img src={selectedMovie.poster} alt={selectedMovie.title} className="w-full h-64 object-cover rounded mb-4" />
                         <h2 className="text-2xl font-bold mb-2 text-center">{selectedMovie.title}</h2>
                         <div className="flex flex-col md:flex-row md:justify-between mb-2">
@@ -260,36 +248,30 @@ const Timeline = () => {
                             <span>Phase: <b>{selectedMovie.phase}</b></span>
                         </div>
                         <p className="mb-2">Type: <b>{selectedMovie.type}</b></p>
-                        {/* OMDb details */}
+
                         {loadingDetails ? (
                             <p className="mb-4 text-gray-700">Loading details...</p>
                         ) : movieDetails[selectedMovie.title] ? (
-                            movieDetails[selectedMovie.title].Error ? (
-                                <p className="mb-4 text-red-600">{movieDetails[selectedMovie.title].Error}</p>
+                            movieDetails[selectedMovie.title].error ? (
+                                <p className="mb-4 text-red-600">{movieDetails[selectedMovie.title].error}</p>
                             ) : (
                                 <>
-                                    <p className="mb-4 text-gray-700"><b>Synopsis:</b> {movieDetails[selectedMovie.title].Plot || "Not available."}</p>
+                                    <p className="mb-4 text-gray-700"><b>Synopsis:</b> {movieDetails[selectedMovie.title].overview || "Not available."}</p>
                                     <div className="mb-2 flex flex-col gap-2">
-                                        <span><b>IMDb Rating:</b> {movieDetails[selectedMovie.title].imdbRating ? `${movieDetails[selectedMovie.title].imdbRating}/10` : "N/A"}</span>
-                                        <span><b>Genre:</b> {movieDetails[selectedMovie.title].Genre || "N/A"}</span>
-                                        <span><b>Director:</b> {movieDetails[selectedMovie.title].Director || "N/A"}</span>
-                                        <span><b>Actors:</b> {movieDetails[selectedMovie.title].Actors || "N/A"}</span>
-                                        <span><b>IMDb:</b> {movieDetails[selectedMovie.title].imdbID ? <a href={`https://www.imdb.com/title/${movieDetails[selectedMovie.title].imdbID}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">View</a> : "N/A"}</span>
+                                        <span><b>TMDB Rating:</b> {movieDetails[selectedMovie.title].vote_average ? `${movieDetails[selectedMovie.title].vote_average}/10` : "N/A"}</span>
+                                        <span><b>Genre:</b> {movieDetails[selectedMovie.title].genres?.map(g => g.name).join(", ") || "N/A"}</span>
+                                        <span><b>Director:</b> {movieDetails[selectedMovie.title].director}</span>
+                                        <span><b>Actors:</b> {movieDetails[selectedMovie.title].actors}</span>
+                                        <span><b>IMDb:</b> {movieDetails[selectedMovie.title].imdb_id ? <a href={`https://www.imdb.com/title/${movieDetails[selectedMovie.title].imdb_id}`} target="_blank" rel="noopener noreferrer" className="text-blue-600 underline">View</a> : "N/A"}</span>
                                     </div>
                                 </>
                             )
                         ) : (
                             <p className="mb-4 text-gray-700">No details available.</p>
                         )}
+
                         <div className="mt-4 flex items-center gap-2">
-                            <input
-                                type="checkbox"
-                                checked={!!watched[selectedMovie.id]}
-                                onChange={e => setWatched(w => ({ ...w, [selectedMovie.id]: e.target.checked }))}
-                                className="w-5 h-5 accent-green-500"
-                                title="Mark as watched"
-                                id="modal-watched"
-                            />
+                            <input type="checkbox" checked={!!watched[selectedMovie.id]} onChange={e => setWatched(w => ({ ...w, [selectedMovie.id]: e.target.checked }))} className="w-5 h-5 accent-green-500" id="modal-watched" />
                             <label htmlFor="modal-watched" className="text-sm">Mark as watched</label>
                         </div>
                     </div>
