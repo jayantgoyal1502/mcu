@@ -1,7 +1,9 @@
 import React from "react";
 import mcuData from "../mcuData";
 import TimelineCard from "../components/TimelineCard";
-
+const TMDB_API_KEY = import.meta.env.VITE_TMDB_API_KEY;
+const TMDB_BASE_URL = import.meta.env.VITE_TMDB_BASE_URL;
+console.log("TMDB Key:", TMDB_API_KEY);
 const Timeline = () => {
   // State initialization
   const [favorites, setFavorites] = React.useState(() => {
@@ -27,8 +29,7 @@ const Timeline = () => {
   );
 
   // Constants
-  const TMDB_API_KEY = "293efb0065d79b9e696fe8275049db26";
-  const TMDB_BASE_URL = "https://api.themoviedb.org/3";
+  
   const genreList = [
     "Action",
     "Adventure",
